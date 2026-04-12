@@ -109,17 +109,49 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
         script2.src = 'https://cdn.emulatorjs.org/stable/data/loader.js';
         
         const captureScript = document.createElement('script');
-        captureScript.textContent = 'setTimeout(function() { var canvas = document.querySelector("canvas"); if (canvas) { try { var stream = canvas.captureStream(15); window.__emuStream = stream; var loading = document.querySelector(".loading"); if (loading) loading.style.display = "none"; console.log("Stream captured"); } catch(e) { console.error(e); } } }, 3000);';
+        captureScript.textContent = `
+          window.getEmulatorStream = function() { return window.__emuStream || null; };
+          setTimeout(function() {
+            var canvas = document.querySelector("canvas");
+            console.log("Canvas found:", !!canvas);
+            if (canvas) {
+              try {
+                var stream = canvas.captureStream(15);
+                console.log("Stream created:", !!stream);
+                window.__emuStream = stream;
+                var loading = document.querySelector(".loading");
+                if (loading) loading.style.display = "none";
+                console.log("Stream captured and stored in window");
+              } catch(e) { 
+                console.error("Capture error:", e); 
+              }
+            }
+          }, 5000);
+          
+          var observer = new MutationObserver(function() {
+            var canvas = document.querySelector("canvas");
+            if (canvas && !window.__emuStream) {
+              try {
+                var stream = canvas.captureStream(15);
+                window.__emuStream = stream;
+                console.log("Stream captured via observer");
+                var loading = document.querySelector(".loading");
+                if (loading) loading.style.display = "none";
+              } catch(e) { console.error(e); }
+            }
+          });
+          observer.observe(document.body, { childList: true, subtree: true });
+        `;
 
         container.appendChild(script1);
         container.appendChild(script2);
         container.appendChild(captureScript);
 
         const pollInterval = setInterval(function() {
-          const stream = (window as unknown as { __emuStream?: MediaStream }).__emuStream;
+          const stream = (window as unknown as { getEmulatorStream?: () => MediaStream | null }).getEmulatorStream?.();
           if (stream && !streamRef.current) {
             streamRef.current = stream;
-            console.log('Stream ready for WebRTC');
+            console.log('Stream ready for WebRTC - React side');
             clearInterval(pollInterval);
           }
         }, 500);
