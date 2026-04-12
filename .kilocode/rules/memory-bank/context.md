@@ -1,87 +1,71 @@
-# Active Context: Next.js Starter Template
+# Active Context: RetroLink — PS1 Netplay P2P
 
 ## Current State
 
-**Template Status**: ✅ Ready for development
+**Project Status**: ✅ Core architecture implemented, ready for real WASM emulator integration
 
-The template is a clean Next.js 16 starter with TypeScript and Tailwind CSS 4. It's ready for AI-assisted expansion to build any type of application.
+RetroLink is a PS1 multiplayer-over-internet app. Architecture:
+- **Host (Player 1)**: Loads ROM locally, runs emulator, streams canvas via WebRTC to guest
+- **Guest (Player 2)**: Opens invite link, receives video stream, sends inputs via DataChannel
+- **Only 1 ROM needed** — on the host machine only
 
 ## Recently Completed
 
-- [x] Base Next.js 16 setup with App Router
-- [x] TypeScript configuration with strict mode
-- [x] Tailwind CSS 4 integration
-- [x] ESLint configuration
-- [x] Memory bank documentation
-- [x] Recipe system for common features
+- [x] Landing page (`/`) — matches RetroLink design (dark, purple accents, feature badges, how-it-works)
+- [x] Signaling server (`/api/signal/[roomId]`) — SSE-based in-memory WebRTC signaling
+- [x] `useWebRTC` hook — handles offer/answer/ICE, canvas stream capture, DataChannel
+- [x] `EmulatorCanvas` component — PS1 input mapping (keyboard + gamepad P1/P2), WASM hook point
+- [x] Room page (`/room/[roomId]`) — full Host/Guest flow:
+  - Host: create room → load ROM → emulator runs → sidebar with invite link
+  - Guest: open link → wait screen → stream auto-connects → receive video + send inputs
+  - "Trocar ROM" button while playing
+  - Both flows work regardless of order (ROM first or room first)
 
 ## Current Structure
 
 | File/Directory | Purpose | Status |
-|----------------|---------|--------|
-| `src/app/page.tsx` | Home page | ✅ Ready |
-| `src/app/layout.tsx` | Root layout | ✅ Ready |
-| `src/app/globals.css` | Global styles | ✅ Ready |
-| `.kilocode/` | AI context & recipes | ✅ Ready |
+|---|---|---|
+| `src/app/page.tsx` | Landing page | ✅ Done |
+| `src/app/room/[roomId]/page.tsx` | Game room (host + guest) | ✅ Done |
+| `src/app/api/signal/[roomId]/route.ts` | WebRTC signaling SSE | ✅ Done |
+| `src/hooks/useWebRTC.ts` | WebRTC P2P hook | ✅ Done |
+| `src/components/EmulatorCanvas.tsx` | Emulator canvas + input | ✅ Done |
+| `src/lib/signal-store.ts` | In-memory signaling store | ✅ Done |
 
-## Current Focus
+## Architecture Details
 
-The template is ready. Next steps depend on user requirements:
+### WebRTC Flow
+1. Host creates `RTCPeerConnection`, sets up DataChannel for inputs, captures canvas via `captureStream(30)`
+2. Host creates offer → POSTs to `/api/signal/[roomId]`
+3. Guest opens SSE stream → receives offer → creates answer → POSTs back
+4. ICE candidates exchanged via same SSE endpoint
+5. Guest receives remote track → displays in `<video>` element
+6. Guest keyboard/gamepad events → DataChannel → Host injects as P2 inputs
 
-1. What type of application to build
-2. What features are needed
-3. Design/branding preferences
+### Emulator Integration Hook
+`EmulatorCanvas` tries `window.__retrolink_loadEmu({ canvas, rom, bios })` at startup.
+- If the function exists (WASM loaded in `/public/emu/`), real emulation runs
+- If not, a test pattern is drawn on the canvas (shows the stream still works)
 
-## Quick Start Guide
+To integrate a real PS1 WASM emulator:
+1. Place WASM files in `/public/emu/`
+2. Define `window.__retrolink_loadEmu` in a script that returns `{ destroy, setP2Input }`
 
-### To add a new page:
+### Input Mapping
+- **P1 (Host keyboard)**: Arrow keys = D-pad, Z/X = ×/○, A/S = □/△, Q/W = L1/R1, E/R = L2/R2, Enter = Start
+- **P2 (Guest keyboard)**: Same arrows/ZXAS + IJKL D-pad + numpad scheme
+- **Gamepad**: Standard mapping supported for both players
 
-Create a file at `src/app/[route]/page.tsx`:
-```tsx
-export default function NewPage() {
-  return <div>New page content</div>;
-}
-```
+## Pending / Next Steps
 
-### To add components:
-
-Create `src/components/` directory and add components:
-```tsx
-// src/components/ui/Button.tsx
-export function Button({ children }: { children: React.ReactNode }) {
-  return <button className="px-4 py-2 bg-blue-600 text-white rounded">{children}</button>;
-}
-```
-
-### To add a database:
-
-Follow `.kilocode/recipes/add-database.md`
-
-### To add API routes:
-
-Create `src/app/api/[route]/route.ts`:
-```tsx
-import { NextResponse } from "next/server";
-
-export async function GET() {
-  return NextResponse.json({ message: "Hello" });
-}
-```
-
-## Available Recipes
-
-| Recipe | File | Use Case |
-|--------|------|----------|
-| Add Database | `.kilocode/recipes/add-database.md` | Data persistence with Drizzle + SQLite |
-
-## Pending Improvements
-
-- [ ] Add more recipes (auth, email, etc.)
-- [ ] Add example components
-- [ ] Add testing setup recipe
+- [ ] Integrate actual PS1 WASM emulator (e.g., duckstation-wasm or PCSX-Redux WASM build)
+- [ ] Add TURN server config for NAT traversal in production
+- [ ] Add audio streaming (AudioContext → MediaStream track)
+- [ ] Persist room state (currently in-memory, resets on server restart)
+- [ ] Add connection status indicator in game room UI
 
 ## Session History
 
 | Date | Changes |
 |------|---------|
-| Initial | Template created with base setup |
+| 2026-04-12 | Initial full implementation: landing page, signaling API, WebRTC hook, emulator canvas, room page |
