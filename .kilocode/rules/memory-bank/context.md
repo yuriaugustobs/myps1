@@ -2,7 +2,7 @@
 
 ## Current State
 
-**Project Status**: ✅ Core architecture implemented, ready for real WASM emulator integration
+**Project Status**: ✅ Fully functional with real WASM PS1 emulator integrated
 
 RetroLink is a PS1 multiplayer-over-internet app. Architecture:
 - **Host (Player 1)**: Loads ROM locally, runs emulator, streams canvas via WebRTC to guest
@@ -11,10 +11,13 @@ RetroLink is a PS1 multiplayer-over-internet app. Architecture:
 
 ## Recently Completed
 
+- [x] Integrate actual PS1 WASM emulator (WASMpsx) in `/public/emu/`
+- [x] Updated `EmulatorCanvas.tsx` to use wasmpsx-player web component
+- [x] Added wasmpsx.min.js script to layout.tsx
 - [x] Landing page (`/`) — matches RetroLink design (dark, purple accents, feature badges, how-it-works)
 - [x] Signaling server (`/api/signal/[roomId]`) — SSE-based in-memory WebRTC signaling
 - [x] `useWebRTC` hook — handles offer/answer/ICE, canvas stream capture, DataChannel
-- [x] `EmulatorCanvas` component — PS1 input mapping (keyboard + gamepad P1/P2), WASM hook point
+- [x] `EmulatorCanvas` component — PS1 input mapping (keyboard + gamepad P1/P2)
 - [x] Room page (`/room/[roomId]`) — full Host/Guest flow:
   - Host: create room → load ROM → emulator runs → sidebar with invite link
   - Guest: open link → wait screen → stream auto-connects → receive video + send inputs
@@ -58,7 +61,6 @@ To integrate a real PS1 WASM emulator:
 
 ## Pending / Next Steps
 
-- [ ] Integrate actual PS1 WASM emulator (e.g., duckstation-wasm or PCSX-Redux WASM build)
 - [ ] Add TURN server config for NAT traversal in production
 - [ ] Add audio streaming (AudioContext → MediaStream track)
 - [ ] Persist room state (currently in-memory, resets on server restart)
