@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, forwardRef, useImperativeHandle } from "react";
+import { useEffect, useRef, forwardRef, useImperativeHandle, useState } from "react";
 import type { InputMessage } from "@/hooks/useWebRTC";
 
 export const PS1_BUTTONS = {
@@ -71,18 +71,17 @@ interface EmulatorCanvasProps {
 const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
   function EmulatorCanvas({ romFile, biosFile, onP1Input, guestMode }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
-    const p2StateRef = useRef({ buttons: 0, axisX: 0, axisY: 0 });
     const p1ButtonsRef = useRef(0);
-    const emuRef = useRef<{ element?: HTMLElement & { readFile: (f: File) => void }; destroy?: () => void }>({});
+    const emuReadyRef = useRef(false);
+    const [isLoading, setIsLoading] = useState(true);
 
     useImperativeHandle(ref, () => ({
       injectP2Input(msg: InputMessage) {
-        p2StateRef.current = { buttons: msg.buttons, axisX: msg.axisX, axisY: msg.axisY };
-        const emu = emuRef.current.element;
-        if (emu && msg.buttons) {
+        const emu = containerRef.current?.querySelector('wasmpsx-player') as HTMLElement & { setAttribute?: (k: string, v: string) => void } | null;
+        if (emu?.setAttribute && msg.buttons) {
           const pad = 0x10000 | msg.buttons;
           emu.setAttribute('pad', pad.toString(16));
-        } else if (emu) {
+        } else if (emu?.setAttribute) {
           emu.setAttribute('pad', '10000');
         }
       },
@@ -92,53 +91,46 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
     }));
 
     useEffect(() => {
-      if (guestMode || !romFile || !containerRef.current) return;
-      let cancelled = false;
-
-      async function initEmulator() {
-        if (!containerRef.current || cancelled) return;
-
-        const container = containerRef.current;
-        container.innerHTML = '';
-
-        const player = document.createElement('wasmpsx-player');
-        player.id = 'wasmpsx-emulator';
-        player.style.width = '100%';
-        player.style.height = '100%';
-        player.style.display = 'block';
+      if (guestMode || !containerRef.current) return;
+      
+      const container = containerRef.current;
+      
+      // Create the wasmpsx-player element if it doesn't exist
+      let player = container.querySelector('wasmpsx-player');
+      if (!player) {
+        player = document.createElement('wasmpsx-player');
+        (player as HTMLElement).id = 'wasmpsx-emulator';
+        (player as HTMLElement).style.width = '100%';
+        (player as HTMLElement).style.height = '100%';
+        (player as HTMLElement).style.display = 'block';
         container.appendChild(player);
+      }
 
-        await new Promise<void>((resolve) => {
-          const check = () => {
-            if ((player as unknown as { ready?: boolean }).ready || (player as HTMLElement & { readFile?: (f: File) => void }).readFile) {
-              resolve();
-            } else {
-              setTimeout(check, 100);
-            }
-          };
-          setTimeout(check, 500);
-        });
+      const checkEmulator = () => {
+        const emu = container.querySelector('wasmpsx-player');
+        if (emu && typeof (emu as HTMLElement & { readFile?: (f: File) => void }).readFile === 'function') {
+          emuReadyRef.current = true;
+          setIsLoading(false);
+        } else {
+          setTimeout(checkEmulator, 200);
+        }
+      };
+      
+      checkEmulator();
+    }, [guestMode]);
 
-        if (cancelled) return;
+    useEffect(() => {
+      if (guestMode || !romFile || !emuReadyRef.current) return;
 
+      const emu = containerRef.current?.querySelector('wasmpsx-player') as HTMLElement & { readFile?: (f: File) => void } | null;
+      if (emu?.readFile) {
         try {
-          (player as HTMLElement & { readFile: (f: File) => void }).readFile(romFile!);
-          emuRef.current.element = player as HTMLElement & { readFile: (f: File) => void };
+          emu.readFile(romFile);
         } catch (err) {
           console.error('Failed to load ROM:', err);
         }
       }
-
-      initEmulator();
-
-      return () => {
-        cancelled = true;
-        if (emuRef.current.element) {
-          emuRef.current.element.remove();
-          emuRef.current = {};
-        }
-      };
-    }, [romFile, biosFile, guestMode]);
+    }, [romFile, guestMode]);
 
     useEffect(() => {
       if (guestMode) return;
@@ -149,8 +141,8 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
         if (down) p1ButtonsRef.current |= bit;
         else p1ButtonsRef.current &= ~bit;
         
-        const emu = emuRef.current.element;
-        if (emu) {
+        const emu = containerRef.current?.querySelector('wasmpsx-player') as HTMLElement & { setAttribute?: (k: string, v: string) => void } | null;
+        if (emu?.setAttribute) {
           const pad = 0x10000 | p1ButtonsRef.current;
           emu.setAttribute('pad', pad.toString(16));
         }
@@ -195,8 +187,8 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
           if ((gp.axes[0] ?? 0) < -0.5) buttons |= PS1_BUTTONS.LEFT;
           if ((gp.axes[0] ?? 0) > 0.5) buttons |= PS1_BUTTONS.RIGHT;
           
-          const emu = emuRef.current.element;
-          if (emu) {
+          const emu = containerRef.current?.querySelector('wasmpsx-player') as HTMLElement & { setAttribute?: (k: string, v: string) => void } | null;
+          if (emu?.setAttribute) {
             const pad = 0x10000 | buttons;
             emu.setAttribute('pad', pad.toString(16));
           }
@@ -245,6 +237,7 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
         className="w-full h-full bg-black flex items-center justify-center"
         style={{ minHeight: '480px' }}
       >
+        {/* wasmpsx-player will be created by the external script */}
         <div className="text-neutral-500 text-sm">Carregando emulador...</div>
       </div>
     );
