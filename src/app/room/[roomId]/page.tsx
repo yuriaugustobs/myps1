@@ -43,15 +43,13 @@ export default function RoomPage() {
   const emuRef = useRef<EmulatorHandle>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
 
-  // Ref that points to the actual emulator canvas (host only)
-  const hostCanvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  // Sync hostCanvasRef from EmulatorHandle after each render
-  useEffect(() => {
+  // Sync hostCanvasRef from EmulatorHandle - poll for canvas since iframe takes time to load
+  const getVideoStream = useCallback(() => {
     if (emuRef.current) {
-      hostCanvasRef.current = emuRef.current.getCanvas();
+      return emuRef.current.getVideoStream();
     }
-  });
+    return null;
+  }, []);
 
   // ── Input state ───────────────────────────────────────────
   const [p2InputMsg, setP2InputMsg] = useState<InputMessage | null>(null);
@@ -72,7 +70,7 @@ export default function RoomPage() {
   const { sendInput: sendInputToHost } = useWebRTC({
     roomId,
     role,
-    canvasRef: role === "host" ? hostCanvasRef : undefined,
+    getVideoStream: role === "host" ? getVideoStream : undefined,
     onRemoteStream: role === "guest" ? handleRemoteStream : undefined,
     onGuestInput: role === "host" ? onGuestInput : undefined,
   });

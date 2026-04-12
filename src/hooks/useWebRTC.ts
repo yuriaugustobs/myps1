@@ -21,8 +21,8 @@ export interface InputMessage {
 interface UseWebRTCOptions {
   roomId: string;
   role: RTCRole;
-  /** Host only: canvas element to capture and stream */
-  canvasRef?: React.RefObject<HTMLCanvasElement | null>;
+  /** Host only: function to get video stream from emulator */
+  getVideoStream?: () => MediaStream | null;
   /** Called on guest when remote stream arrives */
   onRemoteStream?: (stream: MediaStream) => void;
   /** Called on host when guest sends input */
@@ -37,7 +37,7 @@ const ICE_SERVERS: RTCIceServer[] = [
 export function useWebRTC({
   roomId,
   role,
-  canvasRef,
+  getVideoStream,
   onRemoteStream,
   onGuestInput,
 }: UseWebRTCOptions) {
@@ -108,23 +108,25 @@ export function useWebRTC({
         };
 
         // Capture canvas stream (added lazily once canvas is ready)
+        let streamAdded = false;
+        
         const addVideoTrack = () => {
-          if (canvasRef?.current) {
-            const stream = (
-              canvasRef.current as HTMLCanvasElement & {
-                captureStream?: (fps?: number) => MediaStream;
-              }
-            ).captureStream?.(30);
-            if (stream) {
-              stream
-                .getTracks()
-                .forEach((t) => pc.addTrack(t, stream));
+          if (streamAdded) return;
+          
+          if (getVideoStream) {
+            const stream = getVideoStream();
+            if (stream && stream.getTracks().length > 0) {
+              stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+              streamAdded = true;
+              console.log('[RetroLink] Canvas stream added to peer connection');
+            } else {
+              setTimeout(addVideoTrack, 1000);
             }
           }
         };
+        
+        // Start polling
         addVideoTrack();
-        // Retry after a short delay if canvas not yet ready
-        setTimeout(addVideoTrack, 500);
 
         // Create offer
         const offer = await pc.createOffer();

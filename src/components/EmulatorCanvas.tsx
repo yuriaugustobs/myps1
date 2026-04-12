@@ -58,7 +58,7 @@ const KB_MAP_P2: Record<string, number> = {
 
 export interface EmulatorHandle {
   injectP2Input: (msg: InputMessage) => void;
-  getCanvas: () => HTMLCanvasElement | null;
+  getVideoStream: () => MediaStream | null;
 }
 
 interface EmulatorCanvasProps {
@@ -74,6 +74,7 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
     const iframeRef = useRef<HTMLIFrameElement>(null);
     const p1ButtonsRef = useRef(0);
     const romLoadedRef = useRef(false);
+    const streamRef = useRef<MediaStream | null>(null);
 
     useImperativeHandle(ref, () => ({
       injectP2Input(msg: InputMessage) {
@@ -86,12 +87,27 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
           }
         } catch { /* cross-origin */ }
       },
-      getCanvas() {
-        try {
-          return iframeRef.current?.contentWindow?.document.querySelector('canvas') ?? null;
-        } catch { return null; }
+      getVideoStream() {
+        return streamRef.current;
       },
     }));
+
+    useEffect(() => {
+      // Listen for video track messages from iframe
+      const handleMessage = (event: MessageEvent) => {
+        if (event.data.type === 'video-track' && event.data.track) {
+          const track = event.data.track as MediaStreamTrack;
+          if (!streamRef.current) {
+            streamRef.current = new MediaStream([track]);
+          } else {
+            streamRef.current.addTrack(track);
+          }
+        }
+      };
+      
+      window.addEventListener('message', handleMessage);
+      return () => window.removeEventListener('message', handleMessage);
+    }, []);
 
     useEffect(() => {
       if (guestMode || !romFile || !containerRef.current || romLoadedRef.current) return;
@@ -105,7 +121,8 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
       iframeRef.current = iframe;
       container.appendChild(iframe);
 
-      const emitLoad = () => {
+      // Expose getCanvas method for parent to capture stream
+      iframe.onload = () => {
         const win = iframe.contentWindow;
         if (!win) return;
         
@@ -128,8 +145,6 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
         win.addEventListener('keydown', handleKey(true));
         win.addEventListener('keyup', handleKey(false));
       };
-
-      iframe.onload = emitLoad;
 
       // Read ROM as array buffer and create blob URL for the iframe
       const reader = new FileReader();
@@ -180,6 +195,49 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
             </script>
             <script src="https://cdn.emulatorjs.org/stable/data/loader.js"></script>
             <script>
+              // Setup canvas stream capture and send to parent
+              let canvasStream = null;
+              
+              const startCapture = () => {
+                const canvas = document.querySelector('canvas');
+                if (!canvas) {
+                  setTimeout(startCapture, 500);
+                  return;
+                }
+                
+                try {
+                  canvasStream = canvas.captureStream(30);
+                  console.log('[RetroLink] Canvas capture started');
+                  
+                  // Send stream tracks to parent
+                  canvasStream.getTracks().forEach(track => {
+                    parent.postMessage({ type: 'video-track', track: track }, '*');
+                  });
+                  
+                  // Also send the canvas element reference for capture
+                  const loading = document.getElementById('loading');
+                  if (loading) loading.style.display = 'none';
+                  console.log('[RetroLink] Emulator started successfully');
+                } catch (e) {
+                  console.error('[RetroLink] Capture failed:', e);
+                  setTimeout(startCapture, 500);
+                }
+              };
+              
+              // Start capture when emulator loads
+              setTimeout(startCapture, 3000);
+              
+              // Also observe for canvas creation
+              const observer = new MutationObserver(function() {
+                const canvas = document.querySelector('canvas');
+                if (canvas && !canvasStream) {
+                  startCapture();
+                  observer.disconnect();
+                }
+              });
+              observer.observe(document.body, { childList: true, subtree: true });
+              
+              // Input handling
               window.addEventListener('message', function(e) {
                 if (!window.EJS || !window.EJS.emulator) return;
                 const emu = window.EJS.emulator;
@@ -203,17 +261,6 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
                   }
                 }
               });
-              
-              const observer = new MutationObserver(function() {
-                const canvas = document.querySelector('canvas');
-                const loading = document.getElementById('loading');
-                if (canvas && loading) {
-                  loading.style.display = 'none';
-                  console.log('[RetroLink] Emulator started successfully');
-                  observer.disconnect();
-                }
-              });
-              observer.observe(document.body, { childList: true, subtree: true });
             </script>
           </body>
           </html>
