@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, forwardRef, useImperativeHandle, useState } from "react";
+import { useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import type { InputMessage } from "@/hooks/useWebRTC";
 
 export const PS1_BUTTONS = {
@@ -73,18 +73,18 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
     const containerRef = useRef<HTMLDivElement>(null);
     const iframeRef = useRef<HTMLIFrameElement>(null);
     const p1ButtonsRef = useRef(0);
+    const romLoadedRef = useRef(false);
 
     useImperativeHandle(ref, () => ({
       injectP2Input(msg: InputMessage) {
         try {
           if (iframeRef.current?.contentWindow) {
-            const emu = iframeRef.current.contentWindow.document.querySelector('wasmpsx-player') as HTMLElement | null;
-            if (emu?.setAttribute && msg.buttons) {
-              const pad = 0x10000 | msg.buttons;
-              emu.setAttribute('pad', pad.toString(16));
-            } else if (emu?.setAttribute) {
-              emu.setAttribute('pad', '10000');
-            }
+            iframeRef.current.contentWindow.postMessage({
+              type: 'p2-input',
+              buttons: msg.buttons,
+              axisX: msg.axisX,
+              axisY: msg.axisY,
+            }, '*');
           }
         } catch { /* cross-origin */ }
       },
@@ -96,7 +96,8 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
     }));
 
     useEffect(() => {
-      if (guestMode || !romFile || !containerRef.current) return;
+      if (guestMode || !romFile || !containerRef.current || romLoadedRef.current) return;
+      romLoadedRef.current = true;
       
       const container = containerRef.current;
       
@@ -110,23 +111,26 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
         const win = iframe.contentWindow;
         if (!win) return;
         
+        console.log('[RetroLink] EmulatorJS loaded, sending ROM...');
+        
         const sendRom = () => {
           try {
-            const emu = win.document.querySelector('wasmpsx-player');
-            if (emu && typeof (emu as unknown as { readFile?: (f: File) => void }).readFile === 'function') {
-              (emu as unknown as { readFile: (f: File) => void }).readFile(romFile);
-              console.log('[RetroLink] ROM sent to emulator');
+            const emu = (win as unknown as { EJS?: { emu?: { loadROM?: (f: File) => void } } }).EJS?.emu;
+            if (emu?.loadROM) {
+              emu.loadROM(romFile);
+              console.log('[RetroLink] ROM loaded successfully');
             } else {
-              setTimeout(sendRom, 200);
+              setTimeout(sendRom, 500);
             }
           } catch (e) {
-            console.log('[RetroLink] Waiting for emulator...');
-            setTimeout(sendRom, 200);
+            console.log('[RetroLink] Waiting for emulator to be ready...');
+            setTimeout(sendRom, 500);
           }
         };
 
-        setTimeout(sendRom, 1500);
+        setTimeout(sendRom, 2000);
 
+        // Input handling - send to emulator
         const handleKey = (down: boolean) => (e: KeyboardEvent) => {
           const bit = KB_MAP_P1[e.code];
           if (bit === undefined) return;
@@ -134,11 +138,10 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
           else p1ButtonsRef.current &= ~bit;
           
           try {
-            const emu = win.document.querySelector('wasmpsx-player') as HTMLElement | null;
-            if (emu?.setAttribute) {
-              const pad = 0x10000 | p1ButtonsRef.current;
-              emu.setAttribute('pad', pad.toString(16));
-            }
+            win.postMessage({
+              type: 'p1-input',
+              buttons: p1ButtonsRef.current,
+            }, '*');
           } catch { /* cross-origin */ }
           
           onP1Input?.(p1ButtonsRef.current, 0, 0);
@@ -150,26 +153,122 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
 
       iframe.onload = emitLoad;
 
-      iframe.srcdoc = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <style>
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
-            wasmpsx-player { width: 100%; height: 100%; display: block; }
-          </style>
-        </head>
-        <body>
-          <wasmpsx-player id="emu"></wasmpsx-player>
-          <script src="/emu/wasmpsx.min.js"></script>
-        </body>
-        </html>
-      `;
-
-      console.log('[RetroLink] Iframe created with emulator');
+      // Generate base64 ROM for embedding
+      const reader = new FileReader();
+      reader.onload = () => {
+        const romBase64 = reader.result as string;
+        
+        iframe.srcdoc = `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+              * { margin: 0; padding: 0; box-sizing: border-box; }
+              html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
+              #game { width: 100%; height: 100%; }
+              .loading { 
+                position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                color: #8b5cf6; font-family: monospace; font-size: 14px;
+              }
+            </style>
+          </head>
+          <body>
+            <div id="game"></div>
+            <div class="loading" id="loading">Carregando EmulatorJS...</div>
+            <script>
+              window.EJS_player = '#game';
+              window.EJS_core = 'psx';
+              window.EJS_pathtodata = 'https://cdn.emulatorjs.org/stable/data/';
+              window.EJS_gameUrl = '${romBase64}';
+              window.EJS_autoStart = true;
+              window.EJS_biosUrl = '';
+              window.EJS_debug = false;
+            </script>
+            <script src="https://cdn.emulatorjs.org/stable/data/loader.js"></script>
+            <script>
+              // Listen for input messages from parent
+              window.addEventListener('message', function(e) {
+                if (e.data.type === 'p1-input' && window.EJS && window.EJS.emulator) {
+                  // Map our button format to EmulatorJS format
+                  const btn = e.data.buttons;
+                  const emu = window.EJS.emulator;
+                  // EmulatorJS uses different button mapping
+                  if (emu && emu.queues) {
+                    // Send input using simulateInput if available
+                    if (emu.simulateInput) {
+                      // Map: cross=0, square=1, select=2, start=3, up=4, right=5, down=6, left=7, circle=8, triangle=9, l1=10, r1=11
+                      const map = {
+                        0x4000: 0, // cross
+                        0x8000: 1, // square
+                        0x0001: 2, // select
+                        0x0008: 3, // start
+                        0x0010: 4, // up
+                        0x0020: 5, // right
+                        0x0040: 6, // down
+                        0x0080: 7, // left
+                        0x2000: 8, // circle
+                        0x1000: 9, // triangle
+                        0x0400: 10, // l1
+                        0x0800: 11, // r1
+                        0x0100: 12, // l2
+                        0x0200: 13, // r2
+                      };
+                      Object.keys(map).forEach(k => {
+                        if (btn & parseInt(k)) {
+                          emu.simulateInput(map[k], 1);
+                        }
+                      });
+                    }
+                  }
+                }
+                if (e.data.type === 'p2-input' && window.EJS && window.EJS.emulator) {
+                  const btn = e.data.buttons;
+                  const emu = window.EJS.emulator;
+                  if (emu && emu.simulateInput) {
+                    const map = {
+                      0x4000: 0,
+                      0x8000: 1,
+                      0x0001: 2,
+                      0x0008: 3,
+                      0x0010: 4,
+                      0x0020: 5,
+                      0x0040: 6,
+                      0x0080: 7,
+                      0x2000: 8,
+                      0x1000: 9,
+                      0x0400: 10,
+                      0x0800: 11,
+                    };
+                    Object.keys(map).forEach(k => {
+                      if (btn & parseInt(k)) {
+                        emu.simulateInput(map[k], 1);
+                      }
+                    });
+                  }
+                }
+              });
+              
+              // Hide loading when emulator starts
+              const observer = new MutationObserver(function() {
+                const canvas = document.querySelector('canvas');
+                const loading = document.getElementById('loading');
+                if (canvas && loading) {
+                  loading.style.display = 'none';
+                  observer.disconnect();
+                }
+              });
+              observer.observe(document.body, { childList: true, subtree: true });
+            </script>
+          </body>
+          </html>
+        `;
+        
+        console.log('[RetroLink] Iframe created with EmulatorJS PS1');
+      };
+      
+      reader.readAsDataURL(romFile);
     }, [romFile, guestMode, onP1Input]);
 
     if (guestMode) {
