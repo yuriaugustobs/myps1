@@ -110,34 +110,65 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
         
         const captureScript = document.createElement('script');
         captureScript.textContent = `
-          window.getEmulatorStream = function() { return window.__emuStream || null; };
-          setTimeout(function() {
+          console.log('[CaptureScript] Starting...');
+          window.getEmulatorStream = function() { 
+            var s = window.__emuStream;
+            console.log('[CaptureScript] getEmulatorStream called, stream=', !!s, 'tracks=', s?.getTracks()?.length ?? 0);
+            return s || null; 
+          };
+          
+          function tryCapture() {
+            console.log('[CaptureScript] tryCapture called');
+            // Check main document
             var canvas = document.querySelector("canvas");
-            console.log("Canvas found:", !!canvas);
+            console.log('[CaptureScript] Main doc canvas:', !!canvas, canvas?.width, canvas?.height);
+            
+            // Check all iframes
+            var iframes = document.querySelectorAll("iframe");
+            console.log('[CaptureScript] Found iframes:', iframes.length);
+            iframes.forEach(function(iframe, i) {
+              try {
+                var iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+                if (iframeDoc) {
+                  var iframeCanvas = iframeDoc.querySelector("canvas");
+                  console.log('[CaptureScript] Iframe', i, 'canvas:', !!iframeCanvas, iframeCanvas?.width, iframeCanvas?.height);
+                  if (iframeCanvas && !canvas) {
+                    canvas = iframeCanvas;
+                  }
+                }
+              } catch(e) {
+                console.log('[CaptureScript] Cannot access iframe', i, e.message);
+              }
+            });
+            
             if (canvas) {
               try {
                 var stream = canvas.captureStream(15);
-                console.log("Stream created:", !!stream);
+                console.log('[CaptureScript] Stream created:', !!stream, "tracks:", stream.getTracks().length);
                 window.__emuStream = stream;
                 var loading = document.querySelector(".loading");
                 if (loading) loading.style.display = "none";
-                console.log("Stream captured and stored in window");
+                console.log('[CaptureScript] Stream stored in window.__emuStream');
+                return true;
               } catch(e) { 
-                console.error("Capture error:", e); 
+                console.error('[CaptureScript] Capture error:', e); 
               }
+            } else {
+              console.log('[CaptureScript] No canvas found anywhere');
             }
-          }, 5000);
+            return false;
+          }
+          
+          // Try multiple times with increasing delays
+          setTimeout(tryCapture, 2000);
+          setTimeout(tryCapture, 5000);
+          setTimeout(tryCapture, 10000);
+          setTimeout(tryCapture, 15000);
           
           var observer = new MutationObserver(function() {
-            var canvas = document.querySelector("canvas");
-            if (canvas && !window.__emuStream) {
-              try {
-                var stream = canvas.captureStream(15);
-                window.__emuStream = stream;
-                console.log("Stream captured via observer");
-                var loading = document.querySelector(".loading");
-                if (loading) loading.style.display = "none";
-              } catch(e) { console.error(e); }
+            console.log('[CaptureScript] Mutation observed');
+            if (tryCapture()) {
+              observer.disconnect();
             }
           });
           observer.observe(document.body, { childList: true, subtree: true });
@@ -151,8 +182,13 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
           const stream = (window as unknown as { getEmulatorStream?: () => MediaStream | null }).getEmulatorStream?.();
           if (stream && stream.getTracks().length > 0 && !streamRef.current) {
             streamRef.current = stream;
-            console.log('Stream ready for WebRTC - React side, tracks:', stream.getTracks().length);
+            console.log('[EmulatorCanvas] Stream captured, tracks:', stream.getTracks().length);
             clearInterval(pollInterval);
+          } else {
+            // Debug: show what's happening
+            const hasStream = !!stream;
+            const hasTracks = stream?.getTracks().length ?? 0;
+            console.log('[EmulatorCanvas] Poll: stream=', hasStream, 'tracks=', hasTracks);
           }
         }, 500);
       };
