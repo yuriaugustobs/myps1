@@ -47,6 +47,7 @@ export function useWebRTC({
   const sseRef = useRef<EventSource | null>(null);
   const sinceRef = useRef<number>(0);
   const cleanedUp = useRef(false);
+  const processedRef = useRef<Set<number>>(new Set());
 
   const signal = useCallback(
     async (
@@ -71,6 +72,7 @@ export function useWebRTC({
 
   useEffect(() => {
     cleanedUp.current = false;
+    processedRef.current.clear();
 
     async function start() {
       setStatus("connecting");
@@ -177,10 +179,19 @@ export function useWebRTC({
         if (cleanedUp.current) return;
         interface SigMsg {
           type: "offer" | "answer" | "ice";
+          ts: number;
           payload: RTCSessionDescriptionInit | RTCIceCandidateInit;
         }
         const msg: SigMsg = JSON.parse(e.data);
         sinceRef.current = Date.now();
+
+        // Deduplicate by timestamp
+        const msgKey = msg.ts;
+        if (processedRef.current.has(msgKey)) {
+          console.log('[RetroLink] Duplicate message, skipping');
+          return;
+        }
+        processedRef.current.add(msgKey);
 
         const pc = pcRef.current;
         if (!pc) return;
