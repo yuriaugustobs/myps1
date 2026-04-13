@@ -39,9 +39,15 @@ export default function RoomPage() {
   const [biosFile, setBiosFile] = useState<File | null>(null);
   const [copied, setCopied] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [webrtcLogs, setWebrtcLogs] = useState<string[]>([]);
 
   const emuRef = useRef<EmulatorHandle>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
+
+  const addLog = useCallback((msg: string) => {
+    const time = new Date().toLocaleTimeString();
+    setWebrtcLogs(prev => [...prev.slice(-19), `${time} ${msg}`]);
+  }, []);
 
   // Sync hostCanvasRef from EmulatorHandle - poll for canvas since iframe takes time to load
   const getVideoStream = useCallback(() => {
@@ -73,6 +79,7 @@ export default function RoomPage() {
     getVideoStream: role === "host" ? getVideoStream : undefined,
     onRemoteStream: role === "guest" ? handleRemoteStream : undefined,
     onGuestInput: role === "host" ? onGuestInput : undefined,
+    onStatusChange: addLog,
   });
 
   // ── Invite link ───────────────────────────────────────────
@@ -381,6 +388,19 @@ export default function RoomPage() {
                 <p>Q/W → L1/R1 &nbsp; E/R → L2/R2</p>
                 <p>Enter → Start</p>
               </div>
+
+              {webrtcLogs.length > 0 && (
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-widest text-neutral-500 mb-2">
+                    Logs
+                  </p>
+                  <div className="bg-black border border-[#2a2a2a] rounded-lg p-2 text-[10px] font-mono text-neutral-400 max-h-32 overflow-y-auto">
+                    {webrtcLogs.map((log, i) => (
+                      <div key={i} className="whitespace-pre-wrap break-all">{log}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -446,6 +466,19 @@ export default function RoomPage() {
                 <p>NumEnter → Start</p>
                 <p className="text-neutral-600 mt-1">ou gamepad</p>
               </div>
+
+              {webrtcLogs.length > 0 && (
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-widest text-neutral-500 mb-2">
+                    Logs
+                  </p>
+                  <div className="bg-black border border-[#2a2a2a] rounded-lg p-2 text-[10px] font-mono text-neutral-400 max-h-32 overflow-y-auto">
+                    {webrtcLogs.map((log, i) => (
+                      <div key={i} className="whitespace-pre-wrap break-all">{log}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
