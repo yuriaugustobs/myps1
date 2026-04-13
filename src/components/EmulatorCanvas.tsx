@@ -201,6 +201,35 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
         container.appendChild(script2);
         container.appendChild(captureScript);
 
+        // Debug script to monitor what's happening
+        const debugScript = document.createElement('script');
+        debugScript.textContent = `
+          console.log('[Debug] EmulatorJS scripts added');
+          
+          // Wait for EmulatorJS to load and check periodically
+          var checkEmulator = setInterval(function() {
+            console.log('[Debug] Checking EmulatorJS state...');
+            console.log('[Debug] window.EJS_player:', window.EJS_player);
+            console.log('[Debug] document.getElementById("game"):', !!document.getElementById("game"));
+            console.log('[Debug] #game childElementCount:', document.getElementById("game")?.childElementCount);
+            
+            // Check for any canvas, video or iframe in #game
+            var gameDiv = document.getElementById("game");
+            if (gameDiv) {
+              var canvases = gameDiv.querySelectorAll("canvas");
+              var videos = gameDiv.querySelectorAll("video");
+              var iframes = gameDiv.querySelectorAll("iframe");
+              console.log('[Debug] In #game - canvases:', canvases.length, 'videos:', videos.length, 'iframes:', iframes.length);
+            }
+            
+            // Check entire document
+            console.log('[Debug] Total canvases in document:', document.querySelectorAll("canvas").length);
+            console.log('[Debug] Total videos in document:', document.querySelectorAll("video").length);
+            console.log('[Debug] Total iframes in document:', document.querySelectorAll("iframe").length);
+          }, 2000);
+        `;
+        container.appendChild(debugScript);
+
         const pollInterval = setInterval(function() {
           const stream = (window as unknown as { getEmulatorStream?: () => MediaStream | null }).getEmulatorStream?.();
           if (stream && stream.getTracks().length > 0 && !streamRef.current) {
