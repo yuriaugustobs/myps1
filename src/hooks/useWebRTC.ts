@@ -94,6 +94,33 @@ export function useWebRTC({
 
       if (role === "host") {
         // ── HOST ──────────────────────────────────────────────
+        // Wait for video stream first before setting up anything else
+        let streamAdded = false;
+        
+        const waitForStreamAndSetup = async () => {
+          if (!getVideoStream) return;
+          
+          console.log('[RetroLink] Waiting for stream...');
+          let attempts = 0;
+          while (!streamAdded && attempts < 30) {
+            const stream = getVideoStream();
+            if (stream && stream.getTracks().length > 0) {
+              stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+              streamAdded = true;
+              console.log('[RetroLink] Stream added to peer connection');
+              break;
+            }
+            await new Promise(r => setTimeout(r, 1000));
+            attempts++;
+          }
+          
+          // Now create offer
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          await signal("offer", offer);
+          console.log('[RetroLink] Offer sent');
+        };
+
         // Data channel for receiving guest inputs
         const dc = pc.createDataChannel("inputs");
         dcRef.current = dc;
@@ -107,54 +134,8 @@ export function useWebRTC({
           }
         };
 
-        // Wait for video stream to be ready before creating offer
-        const waitForStream = (): Promise<MediaStream | null> => {
-          return new Promise((resolve) => {
-            if (!getVideoStream) {
-              console.log('[RetroLink] No getVideoStream provided');
-              resolve(null);
-              return;
-            }
-            
-            console.log('[RetroLink] Waiting for stream...');
-            let attempts = 0;
-            const check = () => {
-              const stream = getVideoStream();
-              console.log('[RetroLink] Stream check:', !!stream, 'attempts:', attempts);
-              if (stream || attempts > 20) {
-                resolve(stream);
-              } else {
-                attempts++;
-                setTimeout(check, 1000);
-              }
-            };
-            check();
-          });
-        };
-
-        const stream = await waitForStream();
-        console.log('[RetroLink] Stream ready:', !!stream, 'tracks:', stream?.getTracks().length);
-
-        // Capture canvas stream
-        if (stream && stream.getTracks().length > 0) {
-          stream.getTracks().forEach((t) => pc.addTrack(t, stream));
-          console.log('[RetroLink] Canvas stream added to peer connection');
-        } else {
-          console.log('[RetroLink] No stream available yet, will retry after offer');
-          // Add track after a delay if stream becomes available
-          setTimeout(() => {
-            const delayedStream = getVideoStream?.();
-            if (delayedStream && delayedStream.getTracks().length > 0) {
-              delayedStream.getTracks().forEach((t) => pc.addTrack(t, delayedStream));
-              console.log('[RetroLink] Delayed stream added');
-            }
-          }, 5000);
-        }
-
-        // Create offer
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        await signal("offer", offer);
+        // Start waiting for stream
+        waitForStreamAndSetup();
       } else {
         // ── GUEST ─────────────────────────────────────────────
         // Receive remote stream
