@@ -62,7 +62,7 @@ export async function GET(req: NextRequest, { params }: Params) {
         );
       }
       // Register for future pushes
-      addListener(roomId, listenerId, ctrl);
+      addListener(roomId, listenerId, role, ctrl);
     },
     cancel() {
       removeListener(roomId, listenerId);

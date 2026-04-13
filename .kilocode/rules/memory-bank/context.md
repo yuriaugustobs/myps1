@@ -23,6 +23,10 @@ RetroLink is a PS1 multiplayer-over-internet app. Architecture:
   - Guest: open link → wait screen → stream auto-connects → receive video + send inputs
   - "Trocar ROM" button while playing
   - Both flows work regardless of order (ROM first or room first)
+- [x] Fixed signaling relay bug in SSE push path:
+  - Listeners are now role-aware (`host` / `guest`) in `signal-store`
+  - Real-time pushes now go only to the opposite role (no self-delivery of ICE/SDP)
+  - `since` cursor in `useWebRTC` now tracks `msg.ts` (prevents message loss on reconnect)
 
 ## Current Structure
 
@@ -61,7 +65,7 @@ To integrate a real PS1 WASM emulator:
 
 ## Pending / Next Steps
 
-- [ ] Debug WebRTC signaling timing issues (peer connection closed errors)
+- [ ] Validate relay behavior in multi-tab and reconnect scenarios (host/guest reload)
 - [ ] Add TURN server config for NAT traversal in production
 - [ ] Add audio streaming (AudioContext → MediaStream track)
 - [ ] Persist room state (currently in-memory, resets on server restart)
@@ -73,3 +77,4 @@ To integrate a real PS1 WASM emulator:
 |------|---------|
 | 2026-04-12 | Initial full implementation: landing page, signaling API, WebRTC hook, emulator canvas, room page |
 | 2026-04-13 | Fix WebRTC timing - wait for stream before creating peer connection (was getting "signalingState closed" errors) |
+| 2026-04-12 | Fix SSE relay routing: avoid delivering own ICE/SDP to same role; use `msg.ts` for `since` cursor |

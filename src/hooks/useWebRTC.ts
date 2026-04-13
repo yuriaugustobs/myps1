@@ -223,7 +223,7 @@ export function useWebRTC({
         
         const msg: SigMsg = JSON.parse(e.data);
         log(`SSE msg: type=${msg.type}, from=${msg.from}, ts=${msg.ts}`);
-        sinceRef.current = Date.now();
+        sinceRef.current = Math.max(sinceRef.current, msg.ts);
 
         const pc = pcRef.current;
         if (!pc) {
