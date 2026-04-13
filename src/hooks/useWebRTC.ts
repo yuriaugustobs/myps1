@@ -127,8 +127,16 @@ export function useWebRTC({
         };
 
         // Add video track
-        stream.getTracks().forEach((t) => pc.addTrack(t, stream!));
+        stream.getTracks().forEach((t) => {
+          log(`Adding track: ${t.kind}, ${t.label}`);
+          pc.addTrack(t, stream!);
+        });
         log("Video track added to PC");
+
+        // Also listen for remote tracks (in case host wants to receive from guest)
+        pc.ontrack = (e) => {
+          log(`[HOST] Received remote track, streams: ${e.streams.length}, track: ${e.track?.label}`);
+        };
 
         // Data channel for P2 inputs
         const dc = pc.createDataChannel("inputs");
@@ -176,8 +184,9 @@ export function useWebRTC({
         };
 
         pc.ontrack = (e) => {
-          log(`Received remote track, streams: ${e.streams.length}`);
+          log(`[GUEST] Received remote track, streams: ${e.streams.length}, track: ${e.track?.kind} ${e.track?.label}`);
           if (onRemoteStream && e.streams[0]) {
+            log(`[GUEST] Calling onRemoteStream with stream having ${e.streams[0].getTracks().length} tracks`);
             onRemoteStream(e.streams[0]);
           }
         };
@@ -246,7 +255,11 @@ export function useWebRTC({
             log(`Received answer, signalingState=${pc.signalingState}`);
             
             // Allow both "have-local-offer" and "stable" states
-            // (ICE candidates may have already progressed the connection)
+            // Also check if already have remote description set
+            if (pc.signalingState === "stable" && pc.remoteDescription) {
+              log("Already have remote description, ignoring duplicate answer");
+              return;
+            }
             if (pc.signalingState !== "have-local-offer" && pc.signalingState !== "stable") {
               log(`Wrong state ${pc.signalingState}, ignoring`);
               return;
