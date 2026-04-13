@@ -94,16 +94,32 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
         div.id = 'game';
         div.style.cssText = 'width:100%;height:100%;';
         
+        // Add canvas directly - EmulatorJS might use it
+        const canvas = document.createElement('canvas');
+        canvas.id = 'emulator-canvas';
+        canvas.style.cssText = 'width:100%;height:100%;';
+        
         const loading = document.createElement('div');
         loading.className = 'loading';
         loading.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#8b5cf6;font-family:monospace;';
         loading.innerHTML = '<div style="border:3px solid #333;border-top:3px solid #8b5cf6;border-radius:50%;width:30px;height:30px;animation:spin 1s linear infinite;margin:0 auto 15px;"></div>Carregando...';
         
         container.appendChild(div);
+        div.appendChild(canvas);
         container.appendChild(loading);
 
         const script1 = document.createElement('script');
-        script1.textContent = 'window.EJS_player = "#game"; window.EJS_core = "psx"; window.EJS_pathtodata = "https://cdn.emulatorjs.org/stable/data/"; window.EJS_gameUrl = "' + url + '"; window.EJS_autoStart = true; window.EJS_biosUrl = ""; window.EJS_language = "en";';
+        // Try to disable iframe if possible
+        script1.textContent = `
+          window.EJS_player = "#game"; 
+          window.EJS_core = "psx"; 
+          window.EJS_pathtodata = "https://cdn.emulatorjs.org/stable/data/"; 
+          window.EJS_gameUrl = "${url}"; 
+          window.EJS_autoStart = true; 
+          window.EJS_biosUrl = ""; 
+          window.EJS_language = "en";
+          window.EJS_EMULATOR_ELEMENT = "canvas"; // Try to use canvas directly
+        `;
         
         const script2 = document.createElement('script');
         script2.src = 'https://cdn.emulatorjs.org/stable/data/loader.js';
@@ -119,11 +135,18 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
           
           function tryCapture() {
             console.log('[CaptureScript] tryCapture called');
-            // Check main document
-            var canvas = document.querySelector("canvas");
-            console.log('[CaptureScript] Main doc canvas:', !!canvas, canvas?.width, canvas?.height);
             
-            // Check all iframes
+            // First try our explicit canvas
+            var canvas = document.getElementById('emulator-canvas');
+            console.log('[CaptureScript] Our canvas:', !!canvas, canvas?.width, canvas?.height);
+            
+            // If not, look for any canvas
+            if (!canvas) {
+              canvas = document.querySelector("canvas");
+              console.log('[CaptureScript] Any canvas:', !!canvas, canvas?.width, canvas?.height);
+            }
+            
+            // Check all iframes too
             var iframes = document.querySelectorAll("iframe");
             console.log('[CaptureScript] Found iframes:', iframes.length);
             iframes.forEach(function(iframe, i) {
@@ -141,7 +164,7 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
               }
             });
             
-            if (canvas) {
+            if (canvas && canvas.width > 0 && canvas.height > 0) {
               try {
                 var stream = canvas.captureStream(15);
                 console.log('[CaptureScript] Stream created:', !!stream, "tracks:", stream.getTracks().length);
@@ -154,7 +177,7 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
                 console.error('[CaptureScript] Capture error:', e); 
               }
             } else {
-              console.log('[CaptureScript] No canvas found anywhere');
+              console.log('[CaptureScript] No valid canvas (width/height:', canvas?.width, canvas?.height, ')');
             }
             return false;
           }
