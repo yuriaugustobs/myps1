@@ -85,7 +85,6 @@ export function useWebRTC({
     let localPc: RTCPeerConnection | null = null;
     let localSse: EventSource | null = null;
     let localPollTimer: number | null = null;
-    let usingPolling = false;
 
     const isActive = () => !disposed && runId === runIdRef.current;
 
@@ -196,15 +195,8 @@ export function useWebRTC({
     };
 
     const startPolling = () => {
-      if (!isActive() || usingPolling) return;
-      usingPolling = true;
-      log("SSE unavailable, switching to polling fallback");
-
-      localSse?.close();
-      if (sseRef.current === localSse) {
-        sseRef.current = null;
-      }
-      localSse = null;
+      if (!isActive() || localPollTimer !== null) return;
+      log("Polling signaling channel started");
 
       const pollOnce = async () => {
         if (!isActive()) return;
@@ -370,30 +362,36 @@ export function useWebRTC({
         log("Waiting for offer from host...");
       }
 
-      // ── SSE listener ─────────────────────────────────────────────
-      log(`Connecting to SSE /api/signal/${roomId}?role=${role}`);
-      const sse = new EventSource(
-        `/api/signal/${roomId}?role=${role}&since=${sinceRef.current}`
-      );
-      localSse = sse;
-      sseRef.current = sse;
+      // Start polling unconditionally to avoid provider-specific SSE drops.
+      startPolling();
 
-      sse.onopen = () => {
-        if (!isActive()) return;
-        log("SSE connected");
-      };
+      // ── SSE listener (best-effort) ───────────────────────────────
+      try {
+        log(`Connecting to SSE /api/signal/${roomId}?role=${role}`);
+        const sse = new EventSource(
+          `/api/signal/${roomId}?role=${role}&since=${sinceRef.current}`
+        );
+        localSse = sse;
+        sseRef.current = sse;
 
-      sse.onmessage = async (e) => {
-        if (!isActive()) return;
-        const msg = JSON.parse(e.data) as SigMsg;
-        await handleSignalMessage(msg, "sse");
-      };
+        sse.onopen = () => {
+          if (!isActive()) return;
+          log("SSE connected");
+        };
 
-      sse.onerror = (e) => {
-        if (!isActive()) return;
-        log(`SSE error: ${e}`);
-        startPolling();
-      };
+        sse.onmessage = async (e) => {
+          if (!isActive()) return;
+          const msg = JSON.parse(e.data) as SigMsg;
+          await handleSignalMessage(msg, "sse");
+        };
+
+        sse.onerror = (e) => {
+          if (!isActive()) return;
+          log(`SSE error: ${e}`);
+        };
+      } catch (err) {
+        log(`SSE start failed: ${err}`);
+      }
     }
 
     start().catch((err) => {
