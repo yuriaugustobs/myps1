@@ -254,22 +254,23 @@ export function useWebRTC({
           } else if (msg.type === "answer" && role === "host") {
             log(`Received answer, signalingState=${pc.signalingState}`);
             
-            // Allow both "have-local-offer" and "stable" states
-            // Also check if already have remote description set
-            if (pc.signalingState === "stable" && pc.remoteDescription) {
-              log("Already have remote description, ignoring duplicate answer");
+            // ALWAYS check if remote description already set first (ignore duplicates)
+            if (pc.remoteDescription && pc.remoteDescription.type === "answer") {
+              log("Already have remote answer set, ignoring duplicate");
               return;
             }
-            if (pc.signalingState !== "have-local-offer" && pc.signalingState !== "stable") {
-              log(`Wrong state ${pc.signalingState}, ignoring`);
-              return;
+            
+            // Now try to set it (works for both have-local-offer and stable)
+            try {
+              log("Setting remote description (answer)...");
+              await pc.setRemoteDescription(
+                new RTCSessionDescription(msg.payload as RTCSessionDescriptionInit)
+              );
+              log("Remote description set successfully!");
+            } catch (err) {
+              // If it fails, it's probably already set - that's OK
+              log(`Error setting remote desc (may already be set): ${err}`);
             }
-
-            log("Setting remote description (answer)...");
-            await pc.setRemoteDescription(
-              new RTCSessionDescription(msg.payload as RTCSessionDescriptionInit)
-            );
-            log("Remote description set successfully!");
             
           } else if (msg.type === "ice") {
             log(`Received ICE, signalingState=${pc.signalingState}`);
