@@ -45,6 +45,7 @@ export async function GET(req: NextRequest, { params }: Params) {
   const role = url.searchParams.get("role") as SignalRole | null;
   const sinceParam = parseInt(url.searchParams.get("since") ?? "0", 10);
   const since = Number.isFinite(sinceParam) ? sinceParam : 0;
+  const poll = url.searchParams.get("poll") === "1";
 
   if (!role || (role !== "host" && role !== "guest")) {
     return NextResponse.json({ error: "Invalid role" }, { status: 400 });
@@ -54,6 +55,10 @@ export async function GET(req: NextRequest, { params }: Params) {
 
   // Send buffered messages first, then stream new ones
   const buffered = getMessages(roomId, since, role);
+
+  if (poll) {
+    return NextResponse.json({ messages: buffered });
+  }
 
   const stream = new ReadableStream<Uint8Array>({
     start(ctrl) {

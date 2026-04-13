@@ -228,27 +228,6 @@ export default function Home() {
           </div>
         </section>
 
-        {/* How it works */}
-        <section className="max-w-3xl mx-auto px-6 mb-20">
-          <h2 className="text-center text-sm font-bold uppercase tracking-widest text-neutral-400 mb-8">
-            Como Funciona
-          </h2>
-          <ol className="space-y-4">
-            {[
-              "O Player 1 (Host) carrega a ROM ou cria a sala — em qualquer ordem.",
-              "O Player 2 abre o link de convite e clica em \"Entrar\".",
-              "Conexão P2P é estabelecida — o jogo do Host é transmitido para o Player 2.",
-              "O Player 2 joga usando seu próprio controle. Apenas 1 ROM é necessária!",
-            ].map((step, i) => (
-              <li key={i} className="flex items-start gap-4">
-                <span className="flex-shrink-0 w-7 h-7 rounded-full bg-[#8b5cf6] text-white text-xs font-bold flex items-center justify-center">
-                  {i + 1}
-                </span>
-                <p className="text-sm text-neutral-400 pt-0.5">{step}</p>
-              </li>
-            ))}
-          </ol>
-        </section>
       </main>
 
       {/* Footer */}

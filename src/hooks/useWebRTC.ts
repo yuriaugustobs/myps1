@@ -47,8 +47,8 @@ export function useWebRTC({
   const dcRef = useRef<RTCDataChannel | null>(null);
   const sseRef = useRef<EventSource | null>(null);
   const sinceRef = useRef<number>(0);
+  const runIdRef = useRef(0);
   const seenMsgIdsRef = useRef<Set<number>>(new Set());
-  const cleanedUp = useRef(false);
   const offerSentRef = useRef(false);
   const guestRemoteStreamRef = useRef<MediaStream | null>(null);
 
@@ -80,10 +80,158 @@ export function useWebRTC({
   }, []);
 
   useEffect(() => {
-    cleanedUp.current = false;
+    const runId = ++runIdRef.current;
+    let disposed = false;
+    let localPc: RTCPeerConnection | null = null;
+    let localSse: EventSource | null = null;
+    let localPollTimer: number | null = null;
+    let usingPolling = false;
+
+    const isActive = () => !disposed && runId === runIdRef.current;
+
+    // Defensively close any previous resources before starting a new run.
+    sseRef.current?.close();
+    pcRef.current?.close();
+    sseRef.current = null;
+    pcRef.current = null;
+    dcRef.current = null;
+
     offerSentRef.current = false;
     guestRemoteStreamRef.current = null;
     seenMsgIdsRef.current = new Set();
+
+    interface SigMsg {
+      id: number;
+      type: "offer" | "answer" | "ice";
+      from: string;
+      ts: number;
+      payload: unknown;
+    }
+
+    const handleSignalMessage = async (msg: SigMsg, source: "sse" | "poll") => {
+      if (seenMsgIdsRef.current.has(msg.id)) {
+        log(`${source.toUpperCase()} duplicate ignored: id=${msg.id}, type=${msg.type}, from=${msg.from}`);
+        return;
+      }
+      seenMsgIdsRef.current.add(msg.id);
+      log(`${source.toUpperCase()} msg: id=${msg.id}, type=${msg.type}, from=${msg.from}, ts=${msg.ts}`);
+      sinceRef.current = Math.max(sinceRef.current, msg.id);
+
+      const pc = pcRef.current;
+      if (!pc) {
+        log("No PC, skipping message");
+        return;
+      }
+
+      try {
+        if (msg.type === "offer" && role === "guest") {
+          log(`Received offer, signalingState=${pc.signalingState}`);
+
+          const incomingOffer = msg.payload as RTCSessionDescriptionInit;
+          if (
+            pc.remoteDescription?.type === "offer" &&
+            pc.remoteDescription.sdp === incomingOffer.sdp &&
+            pc.localDescription?.type === "answer"
+          ) {
+            log("Duplicate offer with same SDP ignored");
+            return;
+          }
+
+          if (pc.signalingState !== "stable") {
+            log(`Wrong state ${pc.signalingState}, ignoring`);
+            return;
+          }
+
+          log("Setting remote description (offer)...");
+          await pc.setRemoteDescription(
+            new RTCSessionDescription(incomingOffer)
+          );
+          if (!isActive()) return;
+          log("Creating answer...");
+          const answer = await pc.createAnswer();
+          if (!isActive()) return;
+          await pc.setLocalDescription(answer);
+          if (!isActive()) return;
+          log("POSTing answer...");
+          await signal("answer", answer);
+          if (!isActive()) return;
+          log("Answer sent!");
+        } else if (msg.type === "answer" && role === "host") {
+          log(`Received answer, signalingState=${pc.signalingState}`);
+
+          if (pc.remoteDescription && pc.remoteDescription.type === "answer") {
+            log("Already have remote answer set, ignoring duplicate");
+            return;
+          }
+
+          try {
+            log("Setting remote description (answer)...");
+            await pc.setRemoteDescription(
+              new RTCSessionDescription(msg.payload as RTCSessionDescriptionInit)
+            );
+            if (!isActive()) return;
+            log("Remote description set successfully!");
+          } catch (err) {
+            log(`Error setting remote desc (may already be set): ${err}`);
+          }
+        } else if (msg.type === "ice") {
+          log(`Received ICE, signalingState=${pc.signalingState}`);
+
+          if (pc.iceConnectionState === "closed") {
+            log("PC closed, ignoring ICE");
+            return;
+          }
+
+          await pc.addIceCandidate(
+            new RTCIceCandidate(msg.payload as RTCIceCandidateInit)
+          );
+          if (!isActive()) return;
+          log("ICE candidate added");
+        }
+      } catch (err) {
+        log(`ERROR: ${err}`);
+        console.error("WebRTC error:", err);
+        setStatus("error");
+      }
+    };
+
+    const startPolling = () => {
+      if (!isActive() || usingPolling) return;
+      usingPolling = true;
+      log("SSE unavailable, switching to polling fallback");
+
+      localSse?.close();
+      if (sseRef.current === localSse) {
+        sseRef.current = null;
+      }
+      localSse = null;
+
+      const pollOnce = async () => {
+        if (!isActive()) return;
+        try {
+          const res = await fetch(
+            `/api/signal/${roomId}?role=${role}&since=${sinceRef.current}&poll=1`,
+            { cache: "no-store" }
+          );
+          if (!res.ok) {
+            log(`Polling failed with status ${res.status}`);
+            return;
+          }
+          const data = (await res.json()) as { messages?: SigMsg[] };
+          for (const msg of data.messages ?? []) {
+            if (!isActive()) return;
+            await handleSignalMessage(msg, "poll");
+          }
+        } catch (err) {
+          log(`Polling error: ${err}`);
+        }
+      };
+
+      void pollOnce();
+      localPollTimer = window.setInterval(() => {
+        void pollOnce();
+      }, 700);
+    };
 
     async function start() {
       if (role === "host") {
@@ -93,6 +241,7 @@ export function useWebRTC({
         
         log("Waiting for video stream...");
         while (!stream && attempts < 60) {
+          if (!isActive()) return;
           stream = getVideoStream?.() ?? null;
           if (stream && stream.getTracks().length > 0) {
             log(`Stream ready with ${stream.getTracks().length} tracks`);
@@ -103,6 +252,7 @@ export function useWebRTC({
         }
 
         if (!stream || stream.getTracks().length === 0) {
+          if (!isActive()) return;
           log("ERROR: No stream after timeout");
           setStatus("error");
           return;
@@ -111,10 +261,11 @@ export function useWebRTC({
         // Create peer connection
         log("Creating RTCPeerConnection...");
         const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+        localPc = pc;
         pcRef.current = pc;
 
         pc.onconnectionstatechange = () => {
-          if (cleanedUp.current) return;
+          if (!isActive()) return;
           const s = pc.connectionState;
           log(`Connection state: ${s}`);
           if (s === "connected") setStatus("connected");
@@ -124,6 +275,7 @@ export function useWebRTC({
         };
 
         pc.onicecandidate = ({ candidate }) => {
+          if (!isActive()) return;
           if (candidate) {
             log("Sending ICE candidate");
             signal("ice", candidate.toJSON());
@@ -158,9 +310,12 @@ export function useWebRTC({
         // Create and send offer
         log("Creating offer...");
         const offer = await pc.createOffer();
+        if (!isActive()) return;
         await pc.setLocalDescription(offer);
+        if (!isActive()) return;
         log("Offer created, POSTing...");
         await signal("offer", offer);
+        if (!isActive()) return;
         offerSentRef.current = true;
         log("Offer sent successfully!");
         setStatus("waiting-answer");
@@ -168,10 +323,11 @@ export function useWebRTC({
         // ── GUEST: Create PC, wait for offer ─────────────────────────
         log("Creating RTCPeerConnection as guest...");
         const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+        localPc = pc;
         pcRef.current = pc;
 
         pc.onconnectionstatechange = () => {
-          if (cleanedUp.current) return;
+          if (!isActive()) return;
           const s = pc.connectionState;
           log(`Connection state: ${s}`);
           if (s === "connected") setStatus("connected");
@@ -181,6 +337,7 @@ export function useWebRTC({
         };
 
         pc.onicecandidate = ({ candidate }) => {
+          if (!isActive()) return;
           if (candidate) {
             log("Sending ICE candidate");
             signal("ice", candidate.toJSON());
@@ -218,112 +375,24 @@ export function useWebRTC({
       const sse = new EventSource(
         `/api/signal/${roomId}?role=${role}&since=${sinceRef.current}`
       );
+      localSse = sse;
       sseRef.current = sse;
 
       sse.onopen = () => {
+        if (!isActive()) return;
         log("SSE connected");
       };
 
       sse.onmessage = async (e) => {
-        if (cleanedUp.current) return;
-        
-        interface SigMsg {
-          id: number;
-          type: "offer" | "answer" | "ice";
-          from: string;
-          ts: number;
-          payload: unknown;
-        }
-        
-        const msg: SigMsg = JSON.parse(e.data);
-        if (seenMsgIdsRef.current.has(msg.id)) {
-          log(`SSE duplicate ignored: id=${msg.id}, type=${msg.type}, from=${msg.from}`);
-          return;
-        }
-        seenMsgIdsRef.current.add(msg.id);
-        log(`SSE msg: id=${msg.id}, type=${msg.type}, from=${msg.from}, ts=${msg.ts}`);
-        sinceRef.current = Math.max(sinceRef.current, msg.id);
-
-        const pc = pcRef.current;
-        if (!pc) {
-          log("No PC, skipping message");
-          return;
-        }
-
-        try {
-          if (msg.type === "offer" && role === "guest") {
-            log(`Received offer, signalingState=${pc.signalingState}`);
-
-            const incomingOffer = msg.payload as RTCSessionDescriptionInit;
-            if (
-              pc.remoteDescription?.type === "offer" &&
-              pc.remoteDescription.sdp === incomingOffer.sdp &&
-              pc.localDescription?.type === "answer"
-            ) {
-              log("Duplicate offer with same SDP ignored");
-              return;
-            }
-            
-            if (pc.signalingState !== "stable") {
-              log(`Wrong state ${pc.signalingState}, ignoring`);
-              return;
-            }
-
-            log("Setting remote description (offer)...");
-            await pc.setRemoteDescription(
-              new RTCSessionDescription(incomingOffer)
-            );
-            log("Creating answer...");
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            log("POSTing answer...");
-            await signal("answer", answer);
-            log("Answer sent!");
-            
-          } else if (msg.type === "answer" && role === "host") {
-            log(`Received answer, signalingState=${pc.signalingState}`);
-            
-            // ALWAYS check if remote description already set first (ignore duplicates)
-            if (pc.remoteDescription && pc.remoteDescription.type === "answer") {
-              log("Already have remote answer set, ignoring duplicate");
-              return;
-            }
-            
-            // Now try to set it (works for both have-local-offer and stable)
-            try {
-              log("Setting remote description (answer)...");
-              await pc.setRemoteDescription(
-                new RTCSessionDescription(msg.payload as RTCSessionDescriptionInit)
-              );
-              log("Remote description set successfully!");
-            } catch (err) {
-              // If it fails, it's probably already set - that's OK
-              log(`Error setting remote desc (may already be set): ${err}`);
-            }
-            
-          } else if (msg.type === "ice") {
-            log(`Received ICE, signalingState=${pc.signalingState}`);
-            
-            if (pc.signalingState === "closed") {
-              log("PC closed, ignoring ICE");
-              return;
-            }
-
-            await pc.addIceCandidate(
-              new RTCIceCandidate(msg.payload as RTCIceCandidateInit)
-            );
-            log("ICE candidate added");
-          }
-        } catch (err) {
-          log(`ERROR: ${err}`);
-          console.error("WebRTC error:", err);
-          setStatus("error");
-        }
+        if (!isActive()) return;
+        const msg = JSON.parse(e.data) as SigMsg;
+        await handleSignalMessage(msg, "sse");
       };
 
       sse.onerror = (e) => {
+        if (!isActive()) return;
         log(`SSE error: ${e}`);
-        if (!cleanedUp.current) setStatus("error");
+        startPolling();
       };
     }
 
@@ -333,9 +402,19 @@ export function useWebRTC({
     });
 
     return () => {
-      cleanedUp.current = true;
-      sseRef.current?.close();
-      pcRef.current?.close();
+      disposed = true;
+      if (localPollTimer !== null) {
+        window.clearInterval(localPollTimer);
+      }
+      localSse?.close();
+      localPc?.close();
+      if (pcRef.current === localPc) {
+        pcRef.current = null;
+      }
+      if (sseRef.current === localSse) {
+        sseRef.current = null;
+      }
+      dcRef.current = null;
     };
   }, [roomId, role]); // eslint-disable-line react-hooks/exhaustive-deps
 
