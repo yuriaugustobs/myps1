@@ -245,7 +245,9 @@ export function useWebRTC({
           } else if (msg.type === "answer" && role === "host") {
             log(`Received answer, signalingState=${pc.signalingState}`);
             
-            if (pc.signalingState !== "have-local-offer") {
+            // Allow both "have-local-offer" and "stable" states
+            // (ICE candidates may have already progressed the connection)
+            if (pc.signalingState !== "have-local-offer" && pc.signalingState !== "stable") {
               log(`Wrong state ${pc.signalingState}, ignoring`);
               return;
             }
