@@ -75,51 +75,49 @@ export function useWebRTC({
     async function start() {
       setStatus("connecting");
 
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-      pcRef.current = pc;
-
-      pc.onconnectionstatechange = () => {
-        if (cleanedUp.current) return;
-        const s = pc.connectionState;
-        if (s === "connected") setStatus("connected");
-        else if (s === "disconnected" || s === "failed" || s === "closed") {
-          setStatus("disconnected");
-        }
-      };
-
-      // ICE trickle
-      pc.onicecandidate = ({ candidate }) => {
-        if (candidate) signal("ice", candidate.toJSON());
-      };
-
       if (role === "host") {
         // ── HOST ──────────────────────────────────────────────
-        // Wait for video stream first before setting up anything else
-        let streamAdded = false;
+        // Wait for video stream BEFORE creating peer connection
+        let stream: MediaStream | null = null;
+        let attempts = 0;
         
-        const waitForStreamAndSetup = async () => {
-          if (!getVideoStream) return;
-          
-          console.log('[RetroLink] Waiting for stream...');
-          let attempts = 0;
-          while (!streamAdded && attempts < 30) {
-            const stream = getVideoStream();
-            if (stream && stream.getTracks().length > 0) {
-              stream.getTracks().forEach((t) => pc.addTrack(t, stream));
-              streamAdded = true;
-              console.log('[RetroLink] Stream added to peer connection');
-              break;
-            }
-            await new Promise(r => setTimeout(r, 1000));
-            attempts++;
+        console.log('[RetroLink] Waiting for stream before creating PC...');
+        while (!stream && attempts < 60) {
+          stream = getVideoStream?.() ?? null;
+          if (stream && stream.getTracks().length > 0) {
+            console.log('[RetroLink] Stream ready, creating peer connection');
+            break;
           }
-          
-          // Now create offer
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          await signal("offer", offer);
-          console.log('[RetroLink] Offer sent');
+          await new Promise(r => setTimeout(r, 500));
+          attempts++;
+        }
+
+        if (!stream || stream.getTracks().length === 0) {
+          console.error('[RetroLink] No stream available after timeout');
+          setStatus("error");
+          return;
+        }
+
+        // Only now create peer connection
+        const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+        pcRef.current = pc;
+
+        pc.onconnectionstatechange = () => {
+          if (cleanedUp.current) return;
+          const s = pc.connectionState;
+          if (s === "connected") setStatus("connected");
+          else if (s === "disconnected" || s === "failed" || s === "closed") {
+            setStatus("disconnected");
+          }
         };
+
+        pc.onicecandidate = ({ candidate }) => {
+          if (candidate) signal("ice", candidate.toJSON());
+        };
+
+        // Add tracks to the already-ready peer connection
+        stream.getTracks().forEach((t) => pc.addTrack(t, stream!));
+        console.log('[RetroLink] Stream added to peer connection');
 
         // Data channel for receiving guest inputs
         const dc = pc.createDataChannel("inputs");
@@ -134,24 +132,42 @@ export function useWebRTC({
           }
         };
 
-        // Start waiting for stream
-        waitForStreamAndSetup();
+        // Create and send offer
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await signal("offer", offer);
+        console.log('[RetroLink] Offer sent');
       } else {
         // ── GUEST ─────────────────────────────────────────────
-        // Receive remote stream
+        // Guest creates PC immediately and waits for offer
+        const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+        pcRef.current = pc;
+
+        pc.onconnectionstatechange = () => {
+          if (cleanedUp.current) return;
+          const s = pc.connectionState;
+          if (s === "connected") setStatus("connected");
+          else if (s === "disconnected" || s === "failed" || s === "closed") {
+            setStatus("disconnected");
+          }
+        };
+
+        pc.onicecandidate = ({ candidate }) => {
+          if (candidate) signal("ice", candidate.toJSON());
+        };
+
         pc.ontrack = (e) => {
           if (onRemoteStream && e.streams[0]) {
             onRemoteStream(e.streams[0]);
           }
         };
 
-        // Receive data channel for sending inputs
         pc.ondatachannel = (e) => {
           dcRef.current = e.channel;
         };
       }
 
-      // ── SSE listener ─────────────────────────────────────────
+      // ── SSE listener (both roles) ───────────────────────────
       const sse = new EventSource(
         `/api/signal/${roomId}?role=${role}&since=${sinceRef.current}`
       );
@@ -166,8 +182,16 @@ export function useWebRTC({
         const msg: SigMsg = JSON.parse(e.data);
         sinceRef.current = Date.now();
 
+        const pc = pcRef.current;
+        if (!pc) return;
+
         try {
           if (msg.type === "offer" && role === "guest") {
+            // Check if we can set remote description
+            if (pc.signalingState === "have-local-offer") {
+              console.log('[RetroLink] Guest: already have local offer, ignoring duplicate');
+              return;
+            }
             await pc.setRemoteDescription(
               new RTCSessionDescription(
                 msg.payload as RTCSessionDescriptionInit
@@ -177,12 +201,21 @@ export function useWebRTC({
             await pc.setLocalDescription(answer);
             await signal("answer", answer);
           } else if (msg.type === "answer" && role === "host") {
+            // Check if we can set remote description
+            if (pc.signalingState !== "have-local-offer") {
+              console.log('[RetroLink] Host: not in have-local-offer state, ignoring');
+              return;
+            }
             await pc.setRemoteDescription(
               new RTCSessionDescription(
                 msg.payload as RTCSessionDescriptionInit
               )
             );
           } else if (msg.type === "ice") {
+            if (pc.signalingState === "closed") {
+              console.log('[RetroLink] PC closed, ignoring ICE candidate');
+              return;
+            }
             await pc.addIceCandidate(
               new RTCIceCandidate(msg.payload as RTCIceCandidateInit)
             );

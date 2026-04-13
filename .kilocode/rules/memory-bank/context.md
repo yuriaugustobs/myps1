@@ -61,6 +61,7 @@ To integrate a real PS1 WASM emulator:
 
 ## Pending / Next Steps
 
+- [ ] Debug WebRTC signaling timing issues (peer connection closed errors)
 - [ ] Add TURN server config for NAT traversal in production
 - [ ] Add audio streaming (AudioContext → MediaStream track)
 - [ ] Persist room state (currently in-memory, resets on server restart)
@@ -71,3 +72,4 @@ To integrate a real PS1 WASM emulator:
 | Date | Changes |
 |------|---------|
 | 2026-04-12 | Initial full implementation: landing page, signaling API, WebRTC hook, emulator canvas, room page |
+| 2026-04-13 | Fix WebRTC timing - wait for stream before creating peer connection (was getting "signalingState closed" errors) |

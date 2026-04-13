@@ -149,9 +149,9 @@ const EmulatorCanvas = forwardRef<EmulatorHandle, EmulatorCanvasProps>(
 
         const pollInterval = setInterval(function() {
           const stream = (window as unknown as { getEmulatorStream?: () => MediaStream | null }).getEmulatorStream?.();
-          if (stream && !streamRef.current) {
+          if (stream && stream.getTracks().length > 0 && !streamRef.current) {
             streamRef.current = stream;
-            console.log('Stream ready for WebRTC - React side');
+            console.log('Stream ready for WebRTC - React side, tracks:', stream.getTracks().length);
             clearInterval(pollInterval);
           }
         }, 500);
