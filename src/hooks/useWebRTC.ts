@@ -47,6 +47,7 @@ export function useWebRTC({
   const dcRef = useRef<RTCDataChannel | null>(null);
   const sseRef = useRef<EventSource | null>(null);
   const sinceRef = useRef<number>(0);
+  const seenMsgIdsRef = useRef<Set<number>>(new Set());
   const cleanedUp = useRef(false);
   const offerSentRef = useRef(false);
   const guestRemoteStreamRef = useRef<MediaStream | null>(null);
@@ -82,6 +83,7 @@ export function useWebRTC({
     cleanedUp.current = false;
     offerSentRef.current = false;
     guestRemoteStreamRef.current = null;
+    seenMsgIdsRef.current = new Set();
 
     async function start() {
       if (role === "host") {
@@ -226,6 +228,7 @@ export function useWebRTC({
         if (cleanedUp.current) return;
         
         interface SigMsg {
+          id: number;
           type: "offer" | "answer" | "ice";
           from: string;
           ts: number;
@@ -233,8 +236,13 @@ export function useWebRTC({
         }
         
         const msg: SigMsg = JSON.parse(e.data);
-        log(`SSE msg: type=${msg.type}, from=${msg.from}, ts=${msg.ts}`);
-        sinceRef.current = Math.max(sinceRef.current, msg.ts);
+        if (seenMsgIdsRef.current.has(msg.id)) {
+          log(`SSE duplicate ignored: id=${msg.id}, type=${msg.type}, from=${msg.from}`);
+          return;
+        }
+        seenMsgIdsRef.current.add(msg.id);
+        log(`SSE msg: id=${msg.id}, type=${msg.type}, from=${msg.from}, ts=${msg.ts}`);
+        sinceRef.current = Math.max(sinceRef.current, msg.id);
 
         const pc = pcRef.current;
         if (!pc) {
@@ -245,6 +253,16 @@ export function useWebRTC({
         try {
           if (msg.type === "offer" && role === "guest") {
             log(`Received offer, signalingState=${pc.signalingState}`);
+
+            const incomingOffer = msg.payload as RTCSessionDescriptionInit;
+            if (
+              pc.remoteDescription?.type === "offer" &&
+              pc.remoteDescription.sdp === incomingOffer.sdp &&
+              pc.localDescription?.type === "answer"
+            ) {
+              log("Duplicate offer with same SDP ignored");
+              return;
+            }
             
             if (pc.signalingState !== "stable") {
               log(`Wrong state ${pc.signalingState}, ignoring`);
@@ -253,7 +271,7 @@ export function useWebRTC({
 
             log("Setting remote description (offer)...");
             await pc.setRemoteDescription(
-              new RTCSessionDescription(msg.payload as RTCSessionDescriptionInit)
+              new RTCSessionDescription(incomingOffer)
             );
             log("Creating answer...");
             const answer = await pc.createAnswer();

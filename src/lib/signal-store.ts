@@ -7,14 +7,18 @@
 export type SignalRole = "host" | "guest";
 
 export interface SignalMessage {
+  id: number;
   from: SignalRole;
   type: "offer" | "answer" | "ice";
   payload: unknown;
   ts: number;
 }
 
+export type SignalMessageInput = Omit<SignalMessage, "id">;
+
 interface RoomState {
   messages: SignalMessage[];
+  nextMessageId: number;
   /** SSE response controllers waiting for messages */
   listeners: Map<
     string,
@@ -43,35 +47,40 @@ const store: Map<string, RoomState> = (
 
 export function getRoom(roomId: string): RoomState {
   if (!store.has(roomId)) {
-    store.set(roomId, { messages: [], listeners: new Map() });
+    store.set(roomId, { messages: [], nextMessageId: 1, listeners: new Map() });
   }
   return store.get(roomId)!;
 }
 
-export function pushMessage(roomId: string, msg: SignalMessage): void {
+export function pushMessage(roomId: string, msg: SignalMessageInput): SignalMessage {
   const room = getRoom(roomId);
-  room.messages.push(msg);
+  const fullMsg: SignalMessage = {
+    ...msg,
+    id: room.nextMessageId++,
+  };
+  room.messages.push(fullMsg);
   // Notify only listeners of the opposite role.
   for (const [, listener] of room.listeners) {
     try {
-      if (listener.role === msg.from) continue;
-      const data = `data: ${JSON.stringify(msg)}\n\n`;
+      if (listener.role === fullMsg.from) continue;
+      const data = `data: ${JSON.stringify(fullMsg)}\n\n`;
       listener.ctrl.enqueue(new TextEncoder().encode(data));
     } catch {
       // listener already closed
     }
   }
+  return fullMsg;
 }
 
 export function getMessages(
   roomId: string,
-  since: number,
+  sinceId: number,
   forRole: SignalRole
 ): SignalMessage[] {
   const room = getRoom(roomId);
   // Return messages sent TO this role (i.e. FROM the opposite role), newer than `since`
   const opposite: SignalRole = forRole === "host" ? "guest" : "host";
-  return room.messages.filter((m) => m.from === opposite && m.ts > since);
+  return room.messages.filter((m) => m.from === opposite && m.id > sinceId);
 }
 
 export function addListener(

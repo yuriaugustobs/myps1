@@ -31,6 +31,11 @@ RetroLink is a PS1 multiplayer-over-internet app. Architecture:
   - Guest now persists incoming MediaStream in room state before switching phase
   - Video element attaches stream after mount and retries `play()`
   - `useWebRTC` guest `ontrack` now has fallback when `e.streams[0]` is empty
+- [x] Hardened signaling protocol against duplicate/replayed messages:
+  - Server now assigns monotonic message IDs per room
+  - SSE `since` cursor now uses message ID (not timestamp)
+  - Client deduplicates incoming messages by ID
+  - Guest ignores duplicate `offer` with same SDP after answer already set
 
 ## Current Structure
 

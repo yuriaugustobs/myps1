@@ -7,6 +7,7 @@ import {
   removeListener,
   type SignalRole,
   type SignalMessage,
+  type SignalMessageInput,
 } from "@/lib/signal-store";
 
 type Params = { params: Promise<{ roomId: string }> };
@@ -29,20 +30,21 @@ export async function POST(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "Missing fields" }, { status: 400 });
   }
 
-  const msg: SignalMessage = { from: role, type, payload, ts: Date.now() };
+  const msg: SignalMessageInput = { from: role, type, payload, ts: Date.now() };
   pushMessage(roomId, msg);
   return NextResponse.json({ ok: true });
 }
 
 /**
- * GET /api/signal/[roomId]?role=host|guest&since=timestamp
+ * GET /api/signal/[roomId]?role=host|guest&since=messageId
  * Returns an SSE stream that delivers signaling messages for this role.
  */
 export async function GET(req: NextRequest, { params }: Params) {
   const { roomId } = await params;
   const url = new URL(req.url);
   const role = url.searchParams.get("role") as SignalRole | null;
-  const since = parseInt(url.searchParams.get("since") ?? "0", 10);
+  const sinceParam = parseInt(url.searchParams.get("since") ?? "0", 10);
+  const since = Number.isFinite(sinceParam) ? sinceParam : 0;
 
   if (!role || (role !== "host" && role !== "guest")) {
     return NextResponse.json({ error: "Invalid role" }, { status: 400 });
