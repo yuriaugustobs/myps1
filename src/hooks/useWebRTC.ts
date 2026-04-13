@@ -49,6 +49,7 @@ export function useWebRTC({
   const sinceRef = useRef<number>(0);
   const cleanedUp = useRef(false);
   const offerSentRef = useRef(false);
+  const guestRemoteStreamRef = useRef<MediaStream | null>(null);
 
   const log = useCallback((msg: string, ...args: unknown[]) => {
     const prefix = role === "host" ? "[Host]" : "[Guest]";
@@ -80,6 +81,7 @@ export function useWebRTC({
   useEffect(() => {
     cleanedUp.current = false;
     offerSentRef.current = false;
+    guestRemoteStreamRef.current = null;
 
     async function start() {
       if (role === "host") {
@@ -185,10 +187,19 @@ export function useWebRTC({
 
         pc.ontrack = (e) => {
           log(`[GUEST] Received remote track, streams: ${e.streams.length}, track: ${e.track?.kind} ${e.track?.label}`);
-          if (onRemoteStream && e.streams[0]) {
-            log(`[GUEST] Calling onRemoteStream with stream having ${e.streams[0].getTracks().length} tracks`);
-            onRemoteStream(e.streams[0]);
+          if (!onRemoteStream) return;
+
+          let stream = e.streams[0];
+          if (!stream) {
+            if (!guestRemoteStreamRef.current) {
+              guestRemoteStreamRef.current = new MediaStream();
+            }
+            guestRemoteStreamRef.current.addTrack(e.track);
+            stream = guestRemoteStreamRef.current;
           }
+
+          log(`[GUEST] Calling onRemoteStream with stream having ${stream.getTracks().length} tracks`);
+          onRemoteStream(stream);
         };
 
         pc.ondatachannel = (e) => {

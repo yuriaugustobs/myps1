@@ -43,6 +43,7 @@ export default function RoomPage() {
 
   const emuRef = useRef<EmulatorHandle>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
 
   const addLog = useCallback((msg: string) => {
     const time = new Date().toLocaleTimeString();
@@ -66,11 +67,25 @@ export default function RoomPage() {
   }, []);
 
   const handleRemoteStream = useCallback((stream: MediaStream) => {
+    setRemoteStream(stream);
     setPhase("guest-play");
     if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = stream;
+      remoteVideoRef.current.play().catch(() => {
+        // Autoplay can be delayed by browser policies; user interaction usually resolves it.
+      });
     }
   }, []);
+
+  useEffect(() => {
+    if (!remoteStream || !remoteVideoRef.current) return;
+    if (remoteVideoRef.current.srcObject !== remoteStream) {
+      remoteVideoRef.current.srcObject = remoteStream;
+    }
+    remoteVideoRef.current.play().catch(() => {
+      // Keep silent; play will retry on interaction/metadata.
+    });
+  }, [remoteStream, phase]);
 
   // WebRTC hook — always called unconditionally at top level
   const { sendInput: sendInputToHost } = useWebRTC({

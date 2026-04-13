@@ -27,6 +27,10 @@ RetroLink is a PS1 multiplayer-over-internet app. Architecture:
   - Listeners are now role-aware (`host` / `guest`) in `signal-store`
   - Real-time pushes now go only to the opposite role (no self-delivery of ICE/SDP)
   - `since` cursor in `useWebRTC` now tracks `msg.ts` (prevents message loss on reconnect)
+- [x] Fixed guest black-screen race in remote video attach:
+  - Guest now persists incoming MediaStream in room state before switching phase
+  - Video element attaches stream after mount and retries `play()`
+  - `useWebRTC` guest `ontrack` now has fallback when `e.streams[0]` is empty
 
 ## Current Structure
 
